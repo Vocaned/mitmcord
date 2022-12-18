@@ -1,10 +1,10 @@
 import re
-from mitmproxy import http
 from collections.abc import Callable
+from mitmproxy import http
 
 class Host:
     DISCORD = 'canary.discord.com'
-    SENTRY = '...'
+    SENTRY = 'sentry.io'
 
 
 _js_replaces: list[tuple[bytes, bytes]] = []
@@ -14,7 +14,8 @@ _html_regexes: list[tuple[bytes, bytes]] = []
 
 _js_callbacks: list[Callable[[http.HTTPFlow], http.HTTPFlow]] = []
 _html_callbacks: list[Callable[[http.HTTPFlow], http.HTTPFlow]] = []
-_generic_callbacks: list[Callable[[http.HTTPFlow], http.HTTPFlow]] = []
+_response_callbacks: list[Callable[[http.HTTPFlow], http.HTTPFlow]] = []
+_request_callbacks: list[Callable[[http.HTTPFlow], http.HTTPFlow]] = []
 
 def js_replace(old: bytes, new: bytes):
     _js_replaces.append((old, new))
@@ -33,17 +34,21 @@ def register_js(callback: Callable[[http.HTTPFlow], http.HTTPFlow]):
 def register_html(callback: Callable[[http.HTTPFlow], http.HTTPFlow]):
     _html_callbacks.append(callback)
     return callback
-def register(callback: Callable[[http.HTTPFlow], http.HTTPFlow]):
-    _generic_callbacks.append(callback)
+def register_response(callback: Callable[[http.HTTPFlow], http.HTTPFlow]):
+    _response_callbacks.append(callback)
+    return callback
+def register_request(callback: Callable[[http.HTTPFlow], http.HTTPFlow]):
+    _request_callbacks.append(callback)
     return callback
 
-#def request(flow: http.HTTPFlow) -> None:
-#    # Remove zlib compression from discord gateway
-#    if flow.request.pretty_host == 'gateway.discord.gg':
-#        del flow.request.query['compress']
+def request(flow: http.HTTPFlow) -> None:
+    for callback in _request_callbacks:
+        flow = callback(flow)
+        if not flow:
+            return
 
 def response(flow: http.HTTPFlow) -> None:
-    for callback in _generic_callbacks:
+    for callback in _response_callbacks:
         flow = callback(flow)
         if not flow:
             return
@@ -97,15 +102,22 @@ js_replace(b"displayTools:!1",    b"displayTools:!0")
 js_replace(b"showDevWidget:!1",   b"showDevWidget:!0")
 
 # Remove CSP
-@register
+@register_response
 def remove_csp(flow: http.HTTPFlow) -> http.HTTPFlow:
     if 'content-security-policy' in flow.response.headers:
         del flow.response.headers['content-security-policy']
     return flow
 
 # Block sentry.io tracking
-@register
+@register_response
 def block_sentry(flow: http.HTTPFlow) -> http.HTTPFlow:
     if flow.request.pretty_host == Host.SENTRY:
         return None
     return flow
+
+# TODO: Kills discord client performance, client cant keep up with gateway events and eventually loses connection
+#@register_request
+def uncompress_gateway(flow: http.HTTPFlow) -> http.HTTPFlow:
+    # Remove zlib compression from discord gateway
+    if flow.request.pretty_host == 'gateway.discord.gg':
+        del flow.request.query['compress']
