@@ -1,7 +1,7 @@
 import re
 from collections.abc import Callable
 from mitmproxy import http
-import logging
+import asyncio
 
 class Host:
     DISCORD = 'canary.discord.com'
@@ -42,21 +42,21 @@ def register_request(callback: Callable[[http.HTTPFlow], http.HTTPFlow]):
     return callback
 
 
-def request(flow: http.HTTPFlow) -> None:
+async def request(flow: http.HTTPFlow) -> None:
     for callback in _request_callbacks:
         flow = callback(flow)
         if not flow:
             return
 
-def response(flow: http.HTTPFlow) -> None:
+async def response(flow: http.HTTPFlow) -> None:
     for callback in _response_callbacks:
         flow = callback(flow)
         if not flow:
             return
 
     if flow.request.pretty_host == Host.DISCORD and flow.response and flow.response.content:
+        # TODO: Parse <script> tags and determine javascript files from script src instead of .js file extension
         if flow.request.path.endswith('.js'):
-            logging.info('js: %s', flow.request.path)
             # JS patches
             for old,new in _js_replaces:
                 flow.response.content = flow.response.content.replace(old, new)
@@ -68,7 +68,6 @@ def response(flow: http.HTTPFlow) -> None:
                     return
 
         elif 'html' in flow.response.headers.get('content-type', 'html'):
-            logging.info('html: %s', flow.request.path)
             # HTML patches
             for old,new in _html_replaces:
                 flow.response.content = flow.response.content.replace(old, new)

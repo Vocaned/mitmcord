@@ -1,5 +1,6 @@
-import re
 from proxy import *
+import zlib
+import logging
 
 
 # TODO: spoof staff and enable other dev options buttons
@@ -12,9 +13,9 @@ html_regex(rb'integrity="[^"]+?"', b'')
 html_replace(b"RELEASE_CHANNEL: 'canary'", b"RELEASE_CHANNEL: 'staging'")
 
 # Enable devtools
-js_replace(b"devToolsEnabled:!1", b"devToolsEnabled:!0")
-js_replace(b"displayTools:!1",    b"displayTools:!0")
-js_replace(b"showDevWidget:!1",   b"showDevWidget:!0")
+js_replace(b'devToolsEnabled:!1', b'devToolsEnabled:!0')
+js_replace(b'displayTools:!1',    b'displayTools:!0')
+js_replace(b'showDevWidget:!1',   b'showDevWidget:!0')
 
 # Remove CSP
 @register_response
@@ -30,9 +31,36 @@ def block_sentry(flow: http.HTTPFlow) -> http.HTTPFlow:
         return None
     return flow
 
-# TODO: Kills discord client performance, client cant keep up with gateway events and eventually loses connection
-#@register_request
-def uncompress_gateway(flow: http.HTTPFlow) -> http.HTTPFlow:
-    # Remove zlib compression from discord gateway
-    if flow.request.pretty_host == 'gateway.discord.gg':
-        del flow.request.query['compress']
+
+# Log websocket activity
+zlib_buffer = bytearray()
+inflator = zlib.decompressobj()
+
+def websocket_message(flow: http.HTTPFlow):
+    global zlib_buffer
+    assert flow.websocket is not None  # make type checker happy
+
+    message = flow.websocket.messages[-1]
+    content = message.content
+
+    if not content.startswith(b'{'):
+        zlib_buffer.extend(content)
+
+        if len(content) < 4 or content[-4:] != b'\x00\x00\xff\xff':
+            return
+
+        content = inflator.decompress(zlib_buffer)
+        zlib_buffer = bytearray()
+
+    if message.from_client:
+        logging.info('Sent WS: %r', content)
+    else:
+        logging.info('Recv WS: %r', content)
+
+    if not content.startswith(b'{'):
+        if not content.startswith(b'\x78\x9c'):
+            content = b'\x78\x9c' + content
+
+        content = zlib.decompress(content)
+
+        logging.info(content)
