@@ -1,7 +1,5 @@
 from proxy import *
-import zlib
 import logging
-
 
 # TODO: spoof staff and enable other dev options buttons
 
@@ -18,49 +16,28 @@ js_replace(b'displayTools:!1',    b'displayTools:!0')
 js_replace(b'showDevWidget:!1',   b'showDevWidget:!0')
 
 # Remove CSP
-@register_response
+@clientbound_http
 def remove_csp(flow: http.HTTPFlow) -> http.HTTPFlow:
     if 'content-security-policy' in flow.response.headers:
         del flow.response.headers['content-security-policy']
     return flow
 
 # Block sentry.io tracking
-@register_response
+@serverbound_http
 def block_sentry(flow: http.HTTPFlow) -> http.HTTPFlow:
     if flow.request.pretty_host == Host.SENTRY:
         return None
     return flow
 
+@clientbound_http
+def fake_pomelo(flow: http.HTTPFlow) -> http.HTTPFlow:
+    if '/api/v9/users/' in flow.request.path:
+        flow.response.content = re.sub(rb'"discriminator": .+?,', b'"discriminator": "0",', flow.response.content)
 
-# Log websocket activity
-zlib_buffer = bytearray()
-inflator = zlib.decompressobj()
+@clientbound_gateway
+def log_clientbound_gateway(content: bytes) -> bytes:
+    logging.info('Recv: ' + content.decode())
 
-def websocket_message(flow: http.HTTPFlow):
-    global zlib_buffer
-    assert flow.websocket is not None  # make type checker happy
-
-    message = flow.websocket.messages[-1]
-    content = message.content
-
-    if not content.startswith(b'{'):
-        zlib_buffer.extend(content)
-
-        if len(content) < 4 or content[-4:] != b'\x00\x00\xff\xff':
-            return
-
-        content = inflator.decompress(zlib_buffer)
-        zlib_buffer = bytearray()
-
-    if message.from_client:
-        logging.info('Sent WS: %r', content)
-    else:
-        logging.info('Recv WS: %r', content)
-
-    if not content.startswith(b'{'):
-        if not content.startswith(b'\x78\x9c'):
-            content = b'\x78\x9c' + content
-
-        content = zlib.decompress(content)
-
-        logging.info(content)
+@serverbound_gateway
+def log_serverbound_gateway(content: bytes) -> bytes:
+    logging.info('Sent: ' + content.decode())
