@@ -9,6 +9,11 @@ class Host:
     DISCORD = 'canary.discord.com'
     SENTRY = 'sentry.io'
 
+zlib_buffer = bytearray()
+deinflator = zlib.compressobj()
+inflator = zlib.decompressobj()
+Z_SYNC_FLUSH = b'\x00\x00\xff\xff'
+
 _js_replaces: list[tuple[bytes, bytes]] = []
 _html_replaces: list[tuple[bytes, bytes]] = []
 _js_regexes: list[tuple[bytes, bytes]] = []
@@ -52,6 +57,30 @@ def serverbound_gateway(callback: Callable[[bytes], bytes]):
     _serverbound_gateway.append(callback)
     return callback
 
+
+# Core callbacks
+
+# Remove script hashes
+html_regex(rb'nonce="[^"]+?"', b'')
+html_regex(rb'integrity="[^"]+?"', b'')
+
+# Remove CSP
+@clientbound_http
+def remove_csp(flow: http.HTTPFlow) -> http.HTTPFlow:
+    if 'content-security-policy' in flow.response.headers:
+        del flow.response.headers['content-security-policy']
+    return flow
+
+# Block sentry.io tracking
+@serverbound_http
+def block_sentry(flow: http.HTTPFlow) -> http.HTTPFlow:
+    if flow.request.pretty_host == Host.SENTRY:
+        return None
+    return flow
+
+
+# Mitmproxy hooks
+
 def request(flow: http.HTTPFlow) -> None:
     for callback in _serverbound_http:
         flow = callback(flow)
@@ -87,12 +116,6 @@ def response(flow: http.HTTPFlow) -> None:
                 flow = callback(flow)
                 if not flow:
                     return
-
-# Log websocket activity
-zlib_buffer = bytearray()
-deinflator = zlib.compressobj()
-inflator = zlib.decompressobj()
-Z_SYNC_FLUSH = b'\x00\x00\xff\xff'
 
 def websocket_message(flow: http.HTTPFlow):
     global zlib_buffer
@@ -134,5 +157,5 @@ def websocket_message(flow: http.HTTPFlow):
                 flow.websocket.messages[-1].drop()
                 return
 
-        # Send modified data to client
+        # Compress and send modified data to client
         flow.websocket.messages[-1].content = deinflator.compress(json.dumps(j).encode('utf-8')) + deinflator.flush(zlib.Z_SYNC_FLUSH)
