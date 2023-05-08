@@ -1,10 +1,11 @@
 import re
 from collections.abc import Callable
 from mitmproxy import http
-import asyncio
+import json
 import zlib
 
 class Host:
+    GATEWAY = 'gateway.discord.gg'
     DISCORD = 'canary.discord.com'
     SENTRY = 'sentry.io'
 
@@ -17,9 +18,10 @@ _clientbound_js: list[Callable[[http.HTTPFlow], http.HTTPFlow]] = []
 _clientbound_html: list[Callable[[http.HTTPFlow], http.HTTPFlow]] = []
 _clientbound_http: list[Callable[[http.HTTPFlow], http.HTTPFlow]] = []
 _serverbound_http: list[Callable[[http.HTTPFlow], http.HTTPFlow]] = []
-_clientbound_gateway: list[Callable[[bytes], bytes]] = []
-_serverbound_gateway: list[Callable[[bytes], bytes]] = []
+_clientbound_gateway: list[Callable[[dict], dict]] = []
+_serverbound_gateway: list[Callable[[dict], dict]] = []
 
+# TODO: Optimize replace system, current one takes a long time to load a site
 def js_replace(old: bytes, new: bytes):
     _js_replaces.append((old, new))
 def html_replace(old: bytes, new: bytes):
@@ -50,13 +52,13 @@ def serverbound_gateway(callback: Callable[[bytes], bytes]):
     _serverbound_gateway.append(callback)
     return callback
 
-async def request(flow: http.HTTPFlow) -> None:
+def request(flow: http.HTTPFlow) -> None:
     for callback in _serverbound_http:
         flow = callback(flow)
         if not flow:
             return
 
-async def response(flow: http.HTTPFlow) -> None:
+def response(flow: http.HTTPFlow) -> None:
     for callback in _clientbound_http:
         flow = callback(flow)
         if not flow:
@@ -88,40 +90,49 @@ async def response(flow: http.HTTPFlow) -> None:
 
 # Log websocket activity
 zlib_buffer = bytearray()
+deinflator = zlib.compressobj()
 inflator = zlib.decompressobj()
+Z_SYNC_FLUSH = b'\x00\x00\xff\xff'
 
 def websocket_message(flow: http.HTTPFlow):
-    """NOTE: For now gateway events are read-only"""
     global zlib_buffer
-    assert flow.websocket is not None  # make type checker happy
+    assert flow.websocket is not None
+
+    if flow.request.pretty_host != Host.GATEWAY:
+        return
 
     message = flow.websocket.messages[-1]
     content = message.content
 
-    if not content.startswith(b'{'):
+    if not message.from_client:
+        # Server -> Client messages are compressed
         zlib_buffer.extend(content)
 
-        if len(content) < 4 or content[-4:] != b'\x00\x00\xff\xff':
+        if len(content) < 4 or content[-4:] != Z_SYNC_FLUSH:
+            # Don't send message to client yet, wait for full data first
+            flow.websocket.messages[-1].drop()
             return
 
+        # TODO: Fails after initial websocket dies
         content = inflator.decompress(zlib_buffer)
         zlib_buffer = bytearray()
 
+    j = json.loads(content)
+
     if message.from_client:
         for callback in _serverbound_gateway:
-            content = callback(content)
-            if not content:
+            j = callback(j)
+            if not j:
+                flow.websocket.messages[-1].drop()
                 return
+
+        flow.websocket.messages[-1].content = json.dumps(j).encode('utf-8')
     else:
         for callback in _clientbound_gateway:
-            content = callback(content)
-            if not content:
+            j = callback(j)
+            if not j:
+                flow.websocket.messages[-1].drop()
                 return
 
-
-    # TODO: is this ever needed???
-    #if not content.startswith(b'{'):
-    #    if not content.startswith(b'\x78\x9c'):
-    #        content = b'\x78\x9c' + content
-    #
-    #    content = zlib.decompress(content)
+        # Send modified data to client
+        flow.websocket.messages[-1].content = deinflator.compress(json.dumps(j).encode('utf-8')) + deinflator.flush(zlib.Z_SYNC_FLUSH)
