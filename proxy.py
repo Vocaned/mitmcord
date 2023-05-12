@@ -19,12 +19,12 @@ _html_replaces: list[tuple[bytes, bytes]] = []
 _js_regexes: list[tuple[bytes, bytes]] = []
 _html_regexes: list[tuple[bytes, bytes]] = []
 
-_clientbound_js: list[Callable[[http.HTTPFlow], http.HTTPFlow]] = []
-_clientbound_html: list[Callable[[http.HTTPFlow], http.HTTPFlow]] = []
-_clientbound_http: list[Callable[[http.HTTPFlow], http.HTTPFlow]] = []
-_serverbound_http: list[Callable[[http.HTTPFlow], http.HTTPFlow]] = []
-_clientbound_gateway: list[Callable[[dict], dict]] = []
-_serverbound_gateway: list[Callable[[dict], dict]] = []
+_clientbound_js: list[Callable[[http.HTTPFlow], http.HTTPFlow | None]] = []
+_clientbound_html: list[Callable[[http.HTTPFlow], http.HTTPFlow | None]] = []
+_clientbound_http: list[Callable[[http.HTTPFlow], http.HTTPFlow | None]] = []
+_serverbound_http: list[Callable[[http.HTTPFlow], http.HTTPFlow | None]] = []
+_clientbound_gateway: list[Callable[[dict], dict | None]] = []
+_serverbound_gateway: list[Callable[[dict], dict | None]] = []
 
 # TODO: Optimize replace system, current one takes a long time to load a site
 def js_replace(old: bytes, new: bytes):
@@ -38,22 +38,22 @@ def html_regex(pattern: bytes, replace: bytes):
     _html_regexes.append((pattern, replace))
 
 
-def clientbound_js(callback: Callable[[http.HTTPFlow], http.HTTPFlow]):
+def clientbound_js(callback: Callable[[http.HTTPFlow], http.HTTPFlow | None]):
     _clientbound_js.append(callback)
     return callback
-def clientbound_html(callback: Callable[[http.HTTPFlow], http.HTTPFlow]):
+def clientbound_html(callback: Callable[[http.HTTPFlow], http.HTTPFlow | None]):
     _clientbound_html.append(callback)
     return callback
-def clientbound_http(callback: Callable[[http.HTTPFlow], http.HTTPFlow]):
+def clientbound_http(callback: Callable[[http.HTTPFlow], http.HTTPFlow | None]):
     _clientbound_http.append(callback)
     return callback
-def serverbound_http(callback: Callable[[http.HTTPFlow], http.HTTPFlow]):
+def serverbound_http(callback: Callable[[http.HTTPFlow], http.HTTPFlow | None]):
     _serverbound_http.append(callback)
     return callback
-def clientbound_gateway(callback: Callable[[bytes], bytes]):
+def clientbound_gateway(callback: Callable[[dict], dict | None]):
     _clientbound_gateway.append(callback)
     return callback
-def serverbound_gateway(callback: Callable[[bytes], bytes]):
+def serverbound_gateway(callback: Callable[[dict], dict | None]):
     _serverbound_gateway.append(callback)
     return callback
 
@@ -66,14 +66,16 @@ html_regex(rb'integrity="[^"]+?"', b'')
 
 # Remove CSP
 @clientbound_http
-def remove_csp(flow: http.HTTPFlow) -> http.HTTPFlow:
+def remove_csp(flow: http.HTTPFlow) -> http.HTTPFlow | None:
+    assert flow.response
+
     if 'content-security-policy' in flow.response.headers:
         del flow.response.headers['content-security-policy']
     return flow
 
 # Block sentry.io tracking
 @serverbound_http
-def block_sentry(flow: http.HTTPFlow) -> http.HTTPFlow:
+def block_sentry(flow: http.HTTPFlow) -> http.HTTPFlow | None:
     if flow.request.pretty_host == Host.SENTRY:
         return None
     return flow
@@ -83,13 +85,13 @@ def block_sentry(flow: http.HTTPFlow) -> http.HTTPFlow:
 
 def request(flow: http.HTTPFlow) -> None:
     for callback in _serverbound_http:
-        flow = callback(flow)
+        flow = callback(flow) # type: ignore
         if not flow:
             return
 
 def response(flow: http.HTTPFlow) -> None:
     for callback in _clientbound_http:
-        flow = callback(flow)
+        flow = callback(flow) # type: ignore
         if not flow:
             return
 
@@ -102,7 +104,7 @@ def response(flow: http.HTTPFlow) -> None:
             for pattern,replace in _js_regexes:
                 flow.response.content = re.sub(pattern, replace, flow.response.content)
             for callback in _clientbound_js:
-                flow = callback(flow)
+                flow = callback(flow) # type: ignore
                 if not flow:
                     return
 
@@ -113,7 +115,7 @@ def response(flow: http.HTTPFlow) -> None:
             for pattern,replace in _html_regexes:
                 flow.response.content = re.sub(pattern, replace, flow.response.content)
             for callback in _clientbound_html:
-                flow = callback(flow)
+                flow = callback(flow) # type: ignore
                 if not flow:
                     return
 
