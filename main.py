@@ -1,6 +1,13 @@
 from proxy import *
 import logging
 
+logger = logging.getLogger()
+logger.setLevel(logging.DEBUG)
+fh = logging.FileHandler('proxy.log')
+fh.setLevel(logging.DEBUG)
+logger.addHandler(fh)
+
+
 # TODO: reset callbacks on hot-reload. Currently leaves duplicates
 
 # Use staging client
@@ -25,14 +32,14 @@ def fake_pomelo_gateway(event: dict) -> dict | None:
 
     return event
 
-#@clientbound_gateway
+@clientbound_gateway
 def log_clientbound_gateway(event: dict) -> dict | None:
-    logging.info('Recv: %s', event)
+    logger.info('Recv: %s', event)
 
     return event
 
-#@serverbound_gateway
+@serverbound_gateway
 def log_serverbound_gateway(event: dict) -> dict | None:
-    logging.info('Sent: %s', event)
+    logger.info('Sent: %s', event)
 
     return event

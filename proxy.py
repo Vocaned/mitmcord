@@ -69,9 +69,7 @@ html_regex(rb'integrity="[^"]+?"', b'')
 # Remove CSP
 @clientbound_http
 def remove_csp(flow: http.HTTPFlow) -> http.HTTPFlow | None:
-    assert flow.response
-
-    if 'content-security-policy' in flow.response.headers:
+    if flow.response and 'content-security-policy' in flow.response.headers:
         del flow.response.headers['content-security-policy']
     return flow
 
@@ -82,6 +80,7 @@ def block_sentry(flow: http.HTTPFlow) -> http.HTTPFlow | None:
         return None
     return flow
 
+# Block discord tracking
 @serverbound_http
 def block_science(flow: http.HTTPFlow) -> http.HTTPFlow | None:
     if is_api(flow) and flow.request.path.endswith('/science'):
