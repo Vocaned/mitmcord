@@ -10,7 +10,7 @@ class Host:
     SENTRY = 'sentry.io'
 
 zlib_buffer = bytearray()
-deinflator = zlib.compressobj()
+deflator = zlib.compressobj()
 inflator = zlib.decompressobj()
 Z_SYNC_FLUSH = b'\x00\x00\xff\xff'
 
@@ -57,6 +57,8 @@ def serverbound_gateway(callback: Callable[[dict], dict | None]):
     _serverbound_gateway.append(callback)
     return callback
 
+def is_api(flow: http.HTTPFlow) -> bool:
+    return flow.request.pretty_host == Host.DISCORD and flow.request.path.startswith('/api/')
 
 # Core callbacks
 
@@ -80,6 +82,11 @@ def block_sentry(flow: http.HTTPFlow) -> http.HTTPFlow | None:
         return None
     return flow
 
+@serverbound_http
+def block_science(flow: http.HTTPFlow) -> http.HTTPFlow | None:
+    if is_api(flow) and flow.request.path.endswith('/science'):
+        return None
+    return flow
 
 # Mitmproxy hooks
 
@@ -134,11 +141,11 @@ def websocket_message(flow: http.HTTPFlow):
         zlib_buffer.extend(content)
 
         if len(content) < 4 or content[-4:] != Z_SYNC_FLUSH:
-            # Don't send message to client yet, wait for full data first
+            # Wait for full data before sending anything to the client
             flow.websocket.messages[-1].drop()
             return
 
-        # TODO: Fails after initial websocket dies
+        # FIXME: Fails after initial websocket dies
         content = inflator.decompress(zlib_buffer)
         zlib_buffer = bytearray()
 
@@ -160,4 +167,4 @@ def websocket_message(flow: http.HTTPFlow):
                 return
 
         # Compress and send modified data to client
-        flow.websocket.messages[-1].content = deinflator.compress(json.dumps(j).encode('utf-8')) + deinflator.flush(zlib.Z_SYNC_FLUSH)
+        flow.websocket.messages[-1].content = deflator.compress(json.dumps(j).encode('utf-8')) + deflator.flush(zlib.Z_SYNC_FLUSH)
