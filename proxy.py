@@ -101,25 +101,27 @@ def response(flow: http.HTTPFlow) -> None:
         if not flow:
             return
 
-    if flow.request.pretty_host == Host.DISCORD and flow.response and flow.response.content:
+    if flow.response and flow.request.pretty_host == Host.DISCORD:
         # TODO: Parse <script> tags and determine javascript files from script src instead of .js file extension
         if flow.request.path.endswith('.js'):
             # JS patches
-            for old,new in _js_replaces:
-                flow.response.content = flow.response.content.replace(old, new)
-            for pattern,replace in _js_regexes:
-                flow.response.content = re.sub(pattern, replace, flow.response.content)
+            if flow.response.content:
+                for old,new in _js_replaces:
+                    flow.response.content = flow.response.content.replace(old, new)
+                for pattern,replace in _js_regexes:
+                    flow.response.content = re.sub(pattern, replace, flow.response.content)
             for callback in _clientbound_js:
                 flow = callback(flow) # type: ignore
                 if not flow:
                     return
 
-        elif 'html' in flow.response.headers.get('content-type', 'html'):
+        elif flow.response and 'html' in flow.response.headers.get('content-type', 'html'):
             # HTML patches
-            for old,new in _html_replaces:
-                flow.response.content = flow.response.content.replace(old, new)
-            for pattern,replace in _html_regexes:
-                flow.response.content = re.sub(pattern, replace, flow.response.content)
+            if flow.response.content:
+                for old,new in _html_replaces:
+                    flow.response.content = flow.response.content.replace(old, new)
+                for pattern,replace in _html_regexes:
+                    flow.response.content = re.sub(pattern, replace, flow.response.content)
             for callback in _clientbound_html:
                 flow = callback(flow) # type: ignore
                 if not flow:
@@ -144,7 +146,7 @@ def websocket_message(flow: http.HTTPFlow):
             flow.websocket.messages[-1].drop()
             return
 
-        # FIXME: Fails after initial websocket dies
+        # FIXME: Fails after initial websocket dies. Is buffer/socket state not cleared properly?
         content = inflator.decompress(zlib_buffer)
         zlib_buffer = bytearray()
 
