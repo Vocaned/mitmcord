@@ -13,22 +13,24 @@ logger.addHandler(fh)
 # Use staging client
 html_replace(b"RELEASE_CHANNEL: 'canary'", b"RELEASE_CHANNEL: 'staging'")
 
+# Example http request
 @clientbound_http
 def fake_pomelo_http(flow: http.HTTPFlow) -> http.HTTPFlow | None:
     assert flow.response and flow.response.content
 
     if '/api/v9/users/' in flow.request.path:
-        flow.response.content = re.sub(rb'"discriminator": .+?,', b'"discriminator": "0",', flow.response.content)
+        flow.response.content = re.sub(rb'"discriminator": .+?,', b'"discriminator": "1234",', flow.response.content)
 
     return flow
 
+# Example gateway reques
 @clientbound_gateway
 def fake_pomelo_gateway(event: dict) -> dict | None:
     if 't' not in event or event['t'] != 'PRESENCE_UPDATE':
         return event
 
     if 'discriminator' in event['d']['user']:
-        event['d']['user']['discriminator'] = '0'
+        event['d']['user']['discriminator'] = '1234'
 
     return event
 
